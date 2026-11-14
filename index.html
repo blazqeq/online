@@ -525,11 +525,23 @@
             font-size: 0.82rem;
             color: var(--text-muted);
             margin-top: 5px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
 
         .server-name strong {
             color: #d4d4d8;
             font-weight: 600;
+        }
+
+        .motd-icon {
+            width: 14px;
+            height: 14px;
+            border-radius: 3px;
+            object-fit: contain;
+            image-rendering: pixelated;
+            vertical-align: middle;
         }
 
         .message {
@@ -548,7 +560,7 @@
 <div class="container">
     <div class="top-bar">
         <div>
-            <h1>SuperAwesome Online Spillere</h1>
+            <h1>SuperAwesome - Online Spillere</h1>
             <div class="stats" id="stats">Indlæser data...</div>
         </div>
         <button class="refresh-btn" onclick="fetchPlayers()">
@@ -609,12 +621,12 @@
     </div>
 
     <div id="content">
-        <div class="message">Henter spillere fra API...</div>
+        <div class="message">Henter spillere...</div>
     </div>
 </div>
 
 <script>
-    const API_URL = 'https://api.superawesome.dk/servers?size=100&status=online';
+    const API_URL = 'https://api.superawesome.dk/servers?size=250&status=online';
     let allPlayers = [];
     let serverList = [];
     let selectedServer = 'all';
@@ -691,7 +703,8 @@
                     server.playersData.forEach(player => {
                         allPlayers.push({
                             ...player,
-                            serverName: server.name
+                            serverName: server.name,
+                            motdFavicon: server.motdFavicon || null
                         });
                     });
                 }
@@ -811,7 +824,6 @@
             return matchesSearch && matchesServer && matchesRank;
         });
 
-        // Automatisk sortering efter rank (PRO > VIP > Standard) som standard, da sorteringssektionen er fjernet
         filtered.sort((a, b) => {
             let comparison = getRankWeight(b) - getRankWeight(a);
             if (comparison === 0) {
@@ -841,6 +853,8 @@
                 badgeHtml = '<span class="badge badge-vip">VIP</span>';
             }
 
+            const faviconHtml = player.motdFavicon ? `<img class="motd-icon" src="${player.motdFavicon}" alt="">` : '';
+
             card.innerHTML = `
                 <img class="avatar" src="${avatarUrl}" alt="${player.username}" loading="lazy">
                 <div class="player-info">
@@ -858,7 +872,7 @@
                             ${COPY_ICON_SVG}
                         </div>
                     </div>
-                    <div class="server-name">Server: <strong>${player.serverName}</strong></div>
+                    <div class="server-name">Server: ${faviconHtml} <strong>${formatServerName(player.serverName)}</strong></div>
                 </div>
             `;
 

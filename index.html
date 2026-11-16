@@ -18,6 +18,7 @@
             --vip-bg: #f59e0b;
             --pro-bg: #a855f7;
             --success: #22c55e;
+            --discord-accent: #5865F2;
         }
 
         * {
@@ -370,8 +371,8 @@
 
         .player-card:hover {
             transform: translateY(-2px);
-            border-color: #3f3f46;
-            background-color: #161616;
+            border-color: var(--discord-accent);
+            background-color: #16161a;
         }
 
         .avatar {
@@ -381,6 +382,15 @@
             background-color: var(--input-bg);
             image-rendering: pixelated;
             border: 1px solid var(--border);
+            object-fit: cover;
+            transition: border-radius 0.2s, border-color 0.2s;
+            flex-shrink: 0;
+        }
+
+        .player-card.discord-active .avatar {
+            border-radius: 50%;
+            image-rendering: auto;
+            border-color: var(--discord-accent);
         }
 
         .player-info {
@@ -402,6 +412,11 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            transition: color 0.15s;
+        }
+
+        .player-card.discord-active .username {
+            color: #8ea1e1;
         }
 
         .badge {
@@ -418,7 +433,7 @@
         .badge-vip { background-color: var(--vip-bg); }
         .badge-pro { background-color: var(--pro-bg); }
 
-        /* Klikbart UUID med tooltip */
+        /* Klikbart UUID / Discord ID med tooltip */
         .uuid-wrapper {
             position: relative;
             margin-top: 2px;
@@ -439,6 +454,10 @@
             cursor: pointer;
             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
             transition: color 0.15s, background-color 0.15s;
+        }
+
+        .player-card.discord-active .uuid {
+            color: #a1a1aa;
         }
 
         .uuid-text {
@@ -473,7 +492,7 @@
             opacity: 1;
         }
 
-        /* Hover Tooltip over UUID */
+        /* Hover Tooltip over UUID / Discord ID */
         .uuid-tooltip {
             position: absolute;
             bottom: calc(100% + 6px);
@@ -632,6 +651,9 @@
     let selectedServer = 'all';
     let selectedRank = 'all';
 
+    // Cache til Discord-opslag baseret på username
+    const discordCache = new Map();
+
     const COPY_ICON_SVG = `<svg class="uuid-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
     const CHECK_ICON_SVG = `<svg class="uuid-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
 
@@ -651,12 +673,77 @@
         return name.charAt(0).toUpperCase() + name.slice(1);
     }
 
-    async function copyUuid(wrapperEl, uuid) {
+    // Hent discordID via https://api.superawesome.dk/players/{username}
+    async function getPlayerDiscordInfo(player) {
+        const username = player.username;
+        if (discordCache.has(username)) {
+            return discordCache.get(username);
+        }
+
+        const promise = (async () => {
+            try {
+                // 1. Slå spilleren op via username hos SuperAwesome
+                const saRes = await fetch(`https://api.superawesome.dk/players/${encodeURIComponent(username)}`);
+                if (!saRes.ok) return null;
+
+                const entry = await saRes.json();
+                if (!entry || !entry.discordID) {
+                    return null;
+                }
+
+                const discordId = String(entry.discordID).trim();
+                if (!/^\d{17,20}$/.test(discordId)) {
+                    return null;
+                }
+
+                // 2. Hent Discord-brugernavn og profilbillede ud fra discordID
+                let dName = 'Ukendt Discord';
+                let avatarUrl = '';
+
+                try {
+                    const discordRes = await fetch(`https://japi.rest/discord/v1/user/${discordId}`);
+                    if (discordRes.ok) {
+                        const lookupJson = await discordRes.json();
+                        const dUser = lookupJson.data;
+                        if (dUser) {
+                            if (dUser.username) dName = dUser.username;
+                            if (dUser.avatarURL) {
+                                avatarUrl = dUser.avatarURL;
+                            } else if (dUser.avatar) {
+                                const ext = dUser.avatar.startsWith('a_') ? 'gif' : 'png';
+                                avatarUrl = `https://cdn.discordapp.com/avatars/${discordId}/${dUser.avatar}.${ext}?size=128`;
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Fejl ved Discord lookup:', e);
+                }
+
+                if (!avatarUrl) {
+                    const defaultIndex = Number((BigInt(discordId) >> 22n) % 6n);
+                    avatarUrl = `https://cdn.discordapp.com/embed/avatars/${defaultIndex}.png`;
+                }
+
+                return {
+                    discordId,
+                    discordName: dName,
+                    avatarUrl
+                };
+            } catch {
+                return null;
+            }
+        })();
+
+        discordCache.set(username, promise);
+        return promise;
+    }
+
+    async function copyValue(wrapperEl, textToCopy, defaultHint) {
         try {
-            await navigator.clipboard.writeText(uuid);
+            await navigator.clipboard.writeText(textToCopy);
         } catch {
             const tempInput = document.createElement('input');
-            tempInput.value = uuid;
+            tempInput.value = textToCopy;
             document.body.appendChild(tempInput);
             tempInput.select();
             document.execCommand('copy');
@@ -676,7 +763,7 @@
         wrapperEl._copyTimeout = setTimeout(() => {
             wrapperEl.classList.remove('is-copied');
             uuidBtn.classList.remove('copied');
-            hintEl.textContent = 'Klik for at kopiere UUID';
+            hintEl.textContent = wrapperEl.dataset.currentHint || defaultHint;
             const currentIcon = wrapperEl.querySelector('.uuid-icon');
             if (currentIcon) currentIcon.outerHTML = COPY_ICON_SVG;
         }, 1800);
@@ -844,7 +931,7 @@
             const card = document.createElement('div');
             card.className = 'player-card';
 
-            const avatarUrl = `https://skins.mcstats.com/face/${player.uuid}`;
+            const mcAvatarUrl = `https://skins.mcstats.com/face/${player.uuid}`;
 
             let badgeHtml = '';
             if (player.pro) {
@@ -856,13 +943,13 @@
             const faviconHtml = player.motdFavicon ? `<img class="motd-icon" src="${player.motdFavicon}" alt="">` : '';
 
             card.innerHTML = `
-                <img class="avatar" src="${avatarUrl}" alt="${player.username}" loading="lazy">
+                <img class="avatar" src="${mcAvatarUrl}" alt="${player.username}" loading="lazy">
                 <div class="player-info">
                     <div class="user-row">
                         <div class="username">${player.username}</div>
                         ${badgeHtml}
                     </div>
-                    <div class="uuid-wrapper">
+                    <div class="uuid-wrapper" data-current-hint="Klik for at kopiere UUID">
                         <div class="uuid-tooltip">
                             <span class="tooltip-hint">Klik for at kopiere UUID</span>
                             <span class="tooltip-val">${player.uuid}</span>
@@ -876,13 +963,66 @@
                 </div>
             `;
 
+            const avatarImg = card.querySelector('.avatar');
+            const usernameEl = card.querySelector('.username');
             const uuidWrapper = card.querySelector('.uuid-wrapper');
             const uuidEl = card.querySelector('.uuid');
-            uuidEl.addEventListener('click', () => copyUuid(uuidWrapper, player.uuid));
+            const uuidTextEl = card.querySelector('.uuid-text');
+            const tooltipHintEl = card.querySelector('.tooltip-hint');
+            const tooltipValEl = card.querySelector('.tooltip-val');
+
+            let activeCopyValue = player.uuid;
+            let isHovering = false;
+
+            card.addEventListener('mouseenter', async () => {
+                isHovering = true;
+                uuidTextEl.textContent = 'Henter Discord...';
+
+                const discordInfo = await getPlayerDiscordInfo(player);
+
+                if (!isHovering) return;
+
+                if (discordInfo) {
+                    card.classList.add('discord-active');
+                    avatarImg.src = discordInfo.avatarUrl;
+                    avatarImg.onerror = () => {
+                        avatarImg.src = 'https://cdn.discordapp.com/embed/avatars/0.png';
+                    };
+                    usernameEl.textContent = discordInfo.discordName;
+                    uuidTextEl.textContent = discordInfo.discordId;
+
+                    activeCopyValue = discordInfo.discordId;
+                    uuidWrapper.dataset.currentHint = 'Klik for at kopiere Discord ID';
+                    if (!uuidWrapper.classList.contains('is-copied')) {
+                        tooltipHintEl.textContent = 'Klik for at kopiere Discord ID';
+                    }
+                    tooltipValEl.textContent = discordInfo.discordId;
+                } else {
+                    uuidTextEl.textContent = 'Ingen Discord tilknyttet';
+                }
+            });
+
+            card.addEventListener('mouseleave', () => {
+                isHovering = false;
+                card.classList.remove('discord-active');
+                avatarImg.onerror = null;
+                avatarImg.src = mcAvatarUrl;
+                usernameEl.textContent = player.username;
+                uuidTextEl.textContent = player.uuid;
+
+                activeCopyValue = player.uuid;
+                uuidWrapper.dataset.currentHint = 'Klik for at kopiere UUID';
+                if (!uuidWrapper.classList.contains('is-copied')) {
+                    tooltipHintEl.textContent = 'Klik for at kopiere UUID';
+                }
+                tooltipValEl.textContent = player.uuid;
+            });
+
+            uuidEl.addEventListener('click', () => copyValue(uuidWrapper, activeCopyValue, 'Klik for at kopiere UUID'));
             uuidEl.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    copyUuid(uuidWrapper, player.uuid);
+                    copyValue(uuidWrapper, activeCopyValue, 'Klik for at kopiere UUID');
                 }
             });
 
